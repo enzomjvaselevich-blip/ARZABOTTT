@@ -1,0 +1,40 @@
+import fs from 'fs';
+import os from 'os';
+import { exec } from 'child_process';
+
+const BIG_TMP = '/home/container/tmp';
+if(!fs.existsSync(BIG_TMP)) fs.mkdirSync(BIG_TMP,{recursive:true});
+process.env.TMPDIR = BIG_TMP;
+os.tmpdir = () => BIG_TMP;
+
+const execAsync = (c,m=30000)=> new Promise((r,j)=>exec(c,{
+  timeout:m, maxBuffer:5*1024*1024,
+  env:{...process.env, TMPDIR:BIG_TMP, HOME:BIG_TMP}
+},(e,o,er)=> e? j(new Error((er||o).toString().slice(0,400))) : r(o)));
+
+export default {
+ name: 'play',
+ async execute(sock, msg, args){
+  if(!args[0]) return;
+  const chat=msg.key.remoteJid;
+  try{
+   await sock.sendMessage(chat,{react:{text:'⏳',key:msg.key}});
+   let q = args.join(' ').trim();
+   let query = q.includes('https://')? q : `ytsearch1:${q}`;
+
+   // 1 SOLA LLAMADA = rápido como play2
+   const direct = (await execAsync(`./yt-dlp --js-runtimes node --no-update --no-cache-dir --no-warnings --extractor-args "youtube:player_client=android" -f "bestaudio[ext=m4a]/bestaudio/best" --get-url "${query.replace(/"/g,'')}"`)).trim().split('\n').filter(l=>l.startsWith('http'))[0];
+
+   const buf = Buffer.from(await (await fetch(direct)).arrayBuffer());
+
+   if(buf.length < 16*1024*1024){
+     await sock.sendMessage(chat,{audio:buf,mimetype:'audio/mp4'},{quoted:msg});
+   } else {
+     await sock.sendMessage(chat,{document:buf,mimetype:'audio/mp4',fileName:`${q.slice(0,25)}.m4a`},{quoted:msg});
+   }
+   await sock.sendMessage(chat,{react:{text:'✅',key:msg.key}});
+  }catch(e){
+   await sock.sendMessage(chat,{text:`❌ ${e.message}`},{quoted:msg});
+  }
+ }
+}
